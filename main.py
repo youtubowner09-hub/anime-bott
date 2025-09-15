@@ -1,5 +1,5 @@
 # main.py
-# 3-VERSIYA: SOZLAMALAR BAZADAN O'QILADI
+# 3.1-VERSIYA: ASOSIY MENYU RASMSIZ
 
 import os
 from database import create_tables, SessionLocal, BotUser, Settings
@@ -22,11 +22,9 @@ def keep_alive():
 # --- SOZLAMALAR ---
 TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_ID = int(os.environ.get("ADMIN_ID"))
-# Render'ga qo'shiladigan o'zgaruvchilar
-MAIN_PHOTO_ID = os.environ.get("MAIN_PHOTO_ID")
+# Render'dan o'qiladigan o'zgaruvchilar
 AD_USER = os.environ.get("AD_USER")
 CATALOGUE_LINK = os.environ.get("CATALOGUE_LINK")
-# Bu faqat birinchi marta bazani to'ldirish uchun kerak bo'ladi
 DEFAULT_MANDATORY_CHANNEL = os.environ.get("DEFAULT_MANDATORY_CHANNEL")
 
 
@@ -47,7 +45,7 @@ def is_subscribed(user_id: int, context: CallbackContext) -> bool:
     
     channel = get_setting('mandatory_channel')
     if not channel:
-        return True # Agar kanal belgilanmagan bo'lsa, hamma o'tishi mumkin
+        return True 
 
     try:
         member = context.bot.get_chat_member(chat_id=channel, user_id=user_id)
@@ -57,6 +55,7 @@ def is_subscribed(user_id: int, context: CallbackContext) -> bool:
         print(f"Obunani tekshirishda xatolik: {e}")
     return False
 
+# O'ZGARTIRILGAN FUNKSIYA: Endi rasm yubormaydi
 def send_main_menu(update, context: CallbackContext):
     """Foydalanuvchiga asosiy menyuni yuboradi"""
     buttons = [
@@ -65,12 +64,12 @@ def send_main_menu(update, context: CallbackContext):
         [InlineKeyboardButton("📂 Ro'yxat", url=CATALOGUE_LINK)],
     ]
     reply_markup = InlineKeyboardMarkup(buttons)
-    caption_text = "👋 Botimizga xush kelibsiz!"
+    menu_text = "👋 Botimizga xush kelibsiz!"
     
-    context.bot.send_photo(
+    # Rasm yuborish o'rniga oddiy xabar yuboramiz
+    context.bot.send_message(
         chat_id=update.effective_chat.id,
-        photo=MAIN_PHOTO_ID,
-        caption=caption_text,
+        text=menu_text,
         reply_markup=reply_markup
     )
 
@@ -110,17 +109,15 @@ def check_subscription_callback(update: Update, context: CallbackContext):
 # Tugmalar uchun vaqtinchalik javoblar
 def search_by_code_callback(update: Update, context: CallbackContext):
     query = update.callback_query; query.answer()
-    query.message.reply_text("Iltimos, anime kodini yuboring:")
+    context.bot.send_message(chat_id=update.effective_chat.id, text="Iltimos, anime kodini yuboring:")
 
 def advertisement_callback(update: Update, context: CallbackContext):
     query = update.callback_query; query.answer()
-    query.message.reply_text(f"Reklama va hamkorlik uchun murojaat: {AD_USER}")
+    context.bot.send_message(chat_id=update.effective_chat.id, text=f"Reklama va hamkorlik uchun murojaat: {AD_USER}")
 
 # --- BAZANI BIRINCHI MARTA TO'LDIRISH ---
 def initialize_settings():
-    """Agar bazada sozlamalar bo'lmasa, ularni Render'dan olib yozadi"""
     db = SessionLocal()
-    # Majburiy kanalni tekshirish
     mandatory_channel_setting = db.query(Settings).filter(Settings.key == 'mandatory_channel').first()
     if not mandatory_channel_setting and DEFAULT_MANDATORY_CHANNEL:
         new_setting = Settings(key='mandatory_channel', value=DEFAULT_MANDATORY_CHANNEL)
@@ -133,7 +130,6 @@ def initialize_settings():
 def main():
     keep_alive()
     create_tables()
-    # Birinchi marta sozlamalarni bazaga yozib olamiz
     initialize_settings()
 
     updater = Updater(TOKEN, use_context=True)
