@@ -1,6 +1,7 @@
 # database.py
 import os
-from sqlalchemy import create_engine, Column, Integer, String, Text, ForeignKey
+# QO'SHILGAN IMPORT: Katta sonlar uchun
+from sqlalchemy import create_engine, Column, Integer, String, Text, ForeignKey, BigInteger
 from sqlalchemy.orm import sessionmaker, declarative_base, relationship
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
@@ -10,6 +11,8 @@ if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
 engine = create_engine(DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
+
+# --- Jadvallarni Python klasslari sifatida tavsiflaymiz ---
 
 class Anime(Base):
     __tablename__ = "animes"
@@ -30,11 +33,20 @@ class Episode(Base):
 
 class BotUser(Base):
     __tablename__ = "bot_users"
-    user_id = Column(Integer, primary_key=True, index=True, autoincrement=False)
+    # O'ZGARTIRILGAN QATOR: Katta ID raqamlar uchun Integer -> BigInteger
+    user_id = Column(BigInteger, primary_key=True, index=True, autoincrement=False)
     first_name = Column(String)
     username = Column(String, nullable=True)
 
+class Settings(Base):
+    __tablename__ = "settings"
+    key = Column(String, primary_key=True)
+    value = Column(Text)
+
+
+# --- Jadvallarni yaratuvchi funksiya ---
 def create_tables():
+    """Barcha jadvallarni ma'lumotlar bazasida yaratadi"""
     print("Ma'lumotlar bazasida jadvallarni yaratishga harakat qilinmoqda...")
     try:
         Base.metadata.create_all(bind=engine)
