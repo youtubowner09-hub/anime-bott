@@ -1,5 +1,5 @@
 # main.py
-# YAKUNIY TO'LIQ VERSIYA
+# YAKUNIY TO'LIQ VERSIYA (TUZATILGAN)
 
 import os
 import time
@@ -26,7 +26,6 @@ def keep_alive():
 TOKEN = os.environ.get("BOT_TOKEN")
 ADMIN_ID = int(os.environ.get("ADMIN_ID"))
 SECRET_CODE = os.environ.get("SECRET_CODE")
-MAIN_PHOTO_ID = os.environ.get("MAIN_PHOTO_ID") # Asosiy menyu rasmi olib tashlangan, lekin qoldiramiz
 AD_USER = os.environ.get("AD_USER")
 CATALOGUE_LINK = os.environ.get("CATALOGUE_LINK")
 DEFAULT_MANDATORY_CHANNEL = os.environ.get("DEFAULT_MANDATORY_CHANNEL")
@@ -57,7 +56,18 @@ def send_main_menu(update, context: CallbackContext, message_text="👋 Botimizg
         [InlineKeyboardButton("📂 Ro'yxat", url=CATALOGUE_LINK)],
     ]
     reply_markup = InlineKeyboardMarkup(buttons)
-    context.bot.send_message(chat_id=update.effective_chat.id, text=message_text, reply_markup=reply_markup)
+    chat_id = update.effective_chat.id
+    # Agar bu callback_query bo'lsa (tugma bosilsa), yangi xabar yuboramiz
+    if update.callback_query:
+        context.bot.send_message(chat_id=chat_id, text=message_text, reply_markup=reply_markup)
+    # Agar bu /start buyrug'i bo'lsa, rasm bilan yuboramiz
+    else:
+        photo_id = os.environ.get("MAIN_PHOTO_ID")
+        if photo_id:
+            context.bot.send_photo(chat_id=chat_id, photo=photo_id, caption=message_text, reply_markup=reply_markup)
+        else:
+            context.bot.send_message(chat_id=chat_id, text=message_text, reply_markup=reply_markup)
+
 
 def start(update: Update, context: CallbackContext):
     user = update.message.from_user
@@ -82,11 +92,16 @@ def check_subscription_callback(update: Update, context: CallbackContext):
     else:
         query.answer("Siz hali kanalga obuna bo'lmadingiz.", show_alert=True)
 
-# --- ANIME QIDIRISH VA TOMOSHA QILISH ---
+# QAYTA TIKLANGAN FUNKSIYALAR
 def search_by_code_callback(update: Update, context: CallbackContext):
     query = update.callback_query; query.answer()
     context.bot.send_message(chat_id=update.effective_chat.id, text="Iltimos, anime kodini yuboring:")
 
+def advertisement_callback(update: Update, context: CallbackContext):
+    query = update.callback_query; query.answer()
+    context.bot.send_message(chat_id=update.effective_chat.id, text=f"Reklama va hamkorlik uchun murojaat: {AD_USER}")
+
+# ANIME QIDIRISH VA TOMOSHA QILISH
 def handle_anime_code(update: Update, context: CallbackContext):
     code = update.message.text.strip()
     db = SessionLocal()
@@ -116,25 +131,22 @@ def watch_anime_callback(update: Update, context: CallbackContext):
     episodes = db.query(Episode).filter(Episode.anime_id == anime_id).order_by(Episode.episode_number).all()
     db.close()
     if not episodes:
-        query.message.reply_text("Bu anime uchun hali qismlar qo'shilmagan.")
+        context.bot.send_message(chat_id=update.effective_chat.id, text="Bu anime uchun hali qismlar qo'shilmagan.")
         return
     
-    # Birinchi qismni yuborish
     first_episode_video_id = episodes[0].video_file_id
     
     buttons = []
     row = []
     for episode in episodes:
         row.append(InlineKeyboardButton(str(episode.episode_number), callback_data=f"episode_{episode.id}"))
-        if len(row) == 5: # Har qatorda 5 ta tugma
-            buttons.append(row)
-            row = []
-    if row:
-        buttons.append(row)
+        if len(row) == 5:
+            buttons.append(row); row = []
+    if row: buttons.append(row)
     buttons.append([InlineKeyboardButton("⬅️ Orqaga", callback_data=f"back_to_anime_{anime_id}")])
     reply_markup = InlineKeyboardMarkup(buttons)
 
-    query.message.delete() # Rasmli menyuni o'chiramiz
+    query.message.delete()
     context.bot.send_video(chat_id=update.effective_chat.id, video=first_episode_video_id,
                            caption=f"1-qism. Kerakli qismni tanlang:", reply_markup=reply_markup)
 
@@ -147,9 +159,12 @@ def episode_select_callback(update: Update, context: CallbackContext):
     db.close()
     
     if episode:
-        # Videoni almashtirish (yangi xabar yubormasdan)
         media = InputMediaVideo(media=episode.video_file_id, caption=f"{episode.episode_number}-qism. Kerakli qismni tanlang:")
-        query.edit_message_media(media=media, reply_markup=query.message.reply_markup)
+        try:
+            query.edit_message_media(media=media, reply_markup=query.message.reply_markup)
+        except Exception as e:
+            print(f"Videoni o'zgartirishda xato: {e}")
+
 
 def back_to_anime_callback(update: Update, context: CallbackContext):
     query = update.callback_query; query.answer()
@@ -161,12 +176,10 @@ def back_to_anime_callback(update: Update, context: CallbackContext):
     send_anime_interface(update, context, anime)
 
 # --- ADMIN PANELI ---
-# Holatlar
 ADMIN_MAIN, ADD_ANIME_CODE, ADD_ANIME_TITLE, ADD_ANIME_DESC, ADD_ANIME_PHOTO, \
 ADD_EPISODE_CODE, ADD_EPISODE_VIDEOS, BROADCAST_MESSAGE = range(8)
 
 def admin_entry(update: Update, context: CallbackContext):
-    # Bu funksiya oddiy xabar kelsa ishlaydi
     if update.message.from_user.id == ADMIN_ID and update.message.text == SECRET_CODE:
         buttons = [
             [InlineKeyboardButton("➕ Anime Qo'shish", callback_data="admin_add_anime")],
@@ -177,11 +190,10 @@ def admin_entry(update: Update, context: CallbackContext):
         reply_markup = InlineKeyboardMarkup(buttons)
         update.message.reply_text("🔑 Admin paneliga xush kelibsiz!", reply_markup=reply_markup)
         return ADMIN_MAIN
-    # Agar maxfiy kod bo'lmasa, bu oddiy foydalanuvchi yozgan anime kodi
-    handle_anime_code(update, context)
+    
+    handle_anime_code(update, context) # Agar admin kod bo'lmasa, anime kodini qidiradi
     return ConversationHandler.END
 
-# Anime qo'shish logikasi... (avvalgi kod kabi)
 def add_anime_start(update: Update, context: CallbackContext):
     query = update.callback_query; query.answer()
     query.edit_message_text("Yangi anime qo'shish.\n\nIltimos, anime uchun unikal qidiruv kodini yuboring:")
@@ -208,8 +220,6 @@ def get_anime_photo(update: Update, context: CallbackContext):
     update.message.reply_text("✅ Yangi anime muvaffaqiyatli saqlandi!")
     admin_entry(update, context)
     return ConversationHandler.END
-
-# Qismlar qo'shish logikasi
 def add_episodes_start(update: Update, context: CallbackContext):
     query = update.callback_query; query.answer()
     query.edit_message_text("Qaysi anime'ga qism qo'shmoqchisiz? Anime kodini yuboring:")
@@ -240,34 +250,24 @@ def add_episode_video(update: Update, context: CallbackContext):
     update.message.reply_text(f"{episode_count + 1}-qism qo'shildi. Yana video yuboring yoki /done bosing.")
     db.close()
     return ADD_EPISODE_VIDEOS
-
-# Hammaga xabar yuborish
 def broadcast_start(update: Update, context: CallbackContext):
     query = update.callback_query; query.answer()
     query.edit_message_text("Barcha foydalanuvchilarga yuborish uchun xabaringizni kiriting (matn, rasm, video...):")
     return BROADCAST_MESSAGE
 def broadcast_message_handler(update: Update, context: CallbackContext):
-    db = SessionLocal()
-    users = db.query(BotUser.user_id).all()
-    db.close()
-    
-    successful_sends = 0
-    failed_sends = 0
+    db = SessionLocal(); users = db.query(BotUser.user_id).all(); db.close()
+    successful_sends = 0; failed_sends = 0
     update.message.reply_text(f"Xabar yuborish boshlandi. Jami foydalanuvchilar: {len(users)}. Bu biroz vaqt olishi mumkin.")
-
     for user in users:
         try:
             context.bot.copy_message(chat_id=user.user_id, from_chat_id=update.message.chat_id, message_id=update.message.message_id)
             successful_sends += 1
         except Exception as e:
-            failed_sends += 1
-            print(f"Xabar yuborishda xato (ID: {user.user_id}): {e}")
-        time.sleep(0.1) # Telegram limitlariga tushmaslik uchun
-        
+            failed_sends += 1; print(f"Xabar yuborishda xato (ID: {user.user_id}): {e}")
+        time.sleep(0.1)
     context.bot.send_message(chat_id=ADMIN_ID, text=f"📢 Ommaviy xabar yuborish yakunlandi.\n\nMuvaffaqiyatli: {successful_sends}\nXatolik: {failed_sends}")
     admin_entry(update, context)
     return ConversationHandler.END
-
 def admin_exit_callback(update: Update, context: CallbackContext):
     query = update.callback_query; query.answer(); query.message.delete()
     send_main_menu(update, context, message_text="Siz asosiy menyudasiz.")
@@ -276,8 +276,6 @@ def cancel_conversation(update: Update, context: CallbackContext):
     update.message.reply_text("Amal bekor qilindi.")
     admin_entry(update, context)
     return ConversationHandler.END
-
-# --- BAZANI ILK BOR TO'LDIRISH ---
 def initialize_settings():
     db = SessionLocal()
     if not db.query(Settings).filter(Settings.key == 'mandatory_channel').first() and DEFAULT_MANDATORY_CHANNEL:
@@ -327,7 +325,7 @@ def main():
     dp.add_handler(CallbackQueryHandler(episode_select_callback, pattern=r'^episode_'))
     dp.add_handler(CallbackQueryHandler(back_to_anime_callback, pattern=r'^back_to_anime_'))
     dp.add_handler(CallbackQueryHandler(search_by_code_callback, pattern='search_by_code'))
-    dp.add_handler(admin_conv_handler) # Eng oxirida turishi kerak
+    dp.add_handler(admin_conv_handler)
 
     updater.start_polling(timeout=30)
     print("Bot ishga tushdi...")
