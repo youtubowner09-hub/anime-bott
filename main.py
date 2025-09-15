@@ -1,12 +1,12 @@
 # main.py
-# 1-VERSIYA: BOTNI JONLANTIRISH
+# 3-VERSIYA: SOZLAMALAR BAZADAN O'QILADI
 
 import os
-from database import create_tables, SessionLocal, BotUser
+from database import create_tables, SessionLocal, BotUser, Settings
 from flask import Flask
 from threading import Thread
-from telegram.ext import Updater, CommandHandler, CallbackContext
-from telegram import Update
+from telegram.ext import Updater, CommandHandler, CallbackContext, CallbackQueryHandler
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 
 # --- RENDER UCHUN WEB-SERVER QISMI ---
 app = Flask('')
@@ -19,47 +19,131 @@ def keep_alive():
     t = Thread(target=run)
     t.start()
 
+# --- SOZLAMALAR ---
+TOKEN = os.environ.get("BOT_TOKEN")
+ADMIN_ID = int(os.environ.get("ADMIN_ID"))
+# Render'ga qo'shiladigan o'zgaruvchilar
+MAIN_PHOTO_ID = os.environ.get("MAIN_PHOTO_ID")
+AD_USER = os.environ.get("AD_USER")
+CATALOGUE_LINK = os.environ.get("CATALOGUE_LINK")
+# Bu faqat birinchi marta bazani to'ldirish uchun kerak bo'ladi
+DEFAULT_MANDATORY_CHANNEL = os.environ.get("DEFAULT_MANDATORY_CHANNEL")
+
+
+# --- YORDAMCHI FUNKSIYALAR ---
+def get_setting(key):
+    """Bazadan sozlamani oladi"""
+    db = SessionLocal()
+    setting = db.query(Settings).filter(Settings.key == key).first()
+    db.close()
+    return setting.value if setting else None
+
 # --- ASOSIY FUNKSIYALAR ---
+
+def is_subscribed(user_id: int, context: CallbackContext) -> bool:
+    """Foydalanuvchi majburiy kanalga a'zo bo'lganini tekshiradi"""
+    if user_id == ADMIN_ID:
+        return True
+    
+    channel = get_setting('mandatory_channel')
+    if not channel:
+        return True # Agar kanal belgilanmagan bo'lsa, hamma o'tishi mumkin
+
+    try:
+        member = context.bot.get_chat_member(chat_id=channel, user_id=user_id)
+        if member.status in ['creator', 'administrator', 'member']:
+            return True
+    except Exception as e:
+        print(f"Obunani tekshirishda xatolik: {e}")
+    return False
+
+def send_main_menu(update, context: CallbackContext):
+    """Foydalanuvchiga asosiy menyuni yuboradi"""
+    buttons = [
+        [InlineKeyboardButton("🔍 Kod Orqali Qidiruv", callback_data="search_by_code")],
+        [InlineKeyboardButton("📞 Reklama", callback_data="advertisement")],
+        [InlineKeyboardButton("📂 Ro'yxat", url=CATALOGUE_LINK)],
+    ]
+    reply_markup = InlineKeyboardMarkup(buttons)
+    caption_text = "👋 Botimizga xush kelibsiz!"
+    
+    context.bot.send_photo(
+        chat_id=update.effective_chat.id,
+        photo=MAIN_PHOTO_ID,
+        caption=caption_text,
+        reply_markup=reply_markup
+    )
+
 def start(update: Update, context: CallbackContext):
     """/start buyrug'i uchun javob"""
     user = update.message.from_user
     db_session = SessionLocal()
     
-    # Foydalanuvchi bazada bor-yo'qligini tekshiramiz
-    existing_user = db_session.query(BotUser).filter(BotUser.user_id == user.id).first()
-    
-    # Agar bazada yo'q bo'lsa, qo'shamiz
-    if not existing_user:
-        new_user = BotUser(
-            user_id=user.id,
-            first_name=user.first_name,
-            username=user.username
-        )
+    if not db_session.query(BotUser).filter(BotUser.user_id == user.id).first():
+        new_user = BotUser(user_id=user.id, first_name=user.first_name, username=user.username)
         db_session.add(new_user)
         db_session.commit()
-        print(f"Yangi foydalanuvchi qo'shildi: {user.first_name} (ID: {user.id})")
-
-    db_session.close()
     
-    update.message.reply_text(f"Assalomu alaykum, {user.first_name}! Siz botga muvaffaqiyatli kirdingiz.")
+    db_session.close()
+
+    if is_subscribed(user.id, context):
+        send_main_menu(update, context)
+    else:
+        channel_to_join = get_setting('mandatory_channel')
+        buttons = [[InlineKeyboardButton("📢 Kanalga Obuna Bo'lish", url=f"https://t.me/{channel_to_join.replace('@', '')}")],
+                   [InlineKeyboardButton("✅ Tasdiqlash", callback_data="check_subscription")]]
+        reply_markup = InlineKeyboardMarkup(buttons)
+        update.message.reply_text(
+            f"Botdan to'liq foydalanish uchun, iltimos, {channel_to_join} kanaliga obuna bo'ling:",
+            reply_markup=reply_markup
+        )
+
+def check_subscription_callback(update: Update, context: CallbackContext):
+    query = update.callback_query
+    if is_subscribed(query.from_user.id, context):
+        query.answer("Rahmat! Endi botdan foydalanishingiz mumkin.", show_alert=True)
+        query.message.delete()
+        send_main_menu(update, context)
+    else:
+        query.answer("Siz hali kanalga obuna bo'lmadingiz.", show_alert=True)
+
+# Tugmalar uchun vaqtinchalik javoblar
+def search_by_code_callback(update: Update, context: CallbackContext):
+    query = update.callback_query; query.answer()
+    query.message.reply_text("Iltimos, anime kodini yuboring:")
+
+def advertisement_callback(update: Update, context: CallbackContext):
+    query = update.callback_query; query.answer()
+    query.message.reply_text(f"Reklama va hamkorlik uchun murojaat: {AD_USER}")
+
+# --- BAZANI BIRINCHI MARTA TO'LDIRISH ---
+def initialize_settings():
+    """Agar bazada sozlamalar bo'lmasa, ularni Render'dan olib yozadi"""
+    db = SessionLocal()
+    # Majburiy kanalni tekshirish
+    mandatory_channel_setting = db.query(Settings).filter(Settings.key == 'mandatory_channel').first()
+    if not mandatory_channel_setting and DEFAULT_MANDATORY_CHANNEL:
+        new_setting = Settings(key='mandatory_channel', value=DEFAULT_MANDATORY_CHANNEL)
+        db.add(new_setting)
+        db.commit()
+        print(f"Standart majburiy kanal ({DEFAULT_MANDATORY_CHANNEL}) bazaga qo'shildi.")
+    db.close()
 
 # --- BOTNI ISHGA TUSHIRISH ---
 def main():
-    # Render uxlatib qo'ymasligi uchun web-serverni ishga tushiramiz
     keep_alive()
-
-    # Ma'lumotlar bazasida jadvallarni yaratamiz
     create_tables()
+    # Birinchi marta sozlamalarni bazaga yozib olamiz
+    initialize_settings()
 
-    # Bot sozlamalari
-    TOKEN = os.environ.get("BOT_TOKEN")
     updater = Updater(TOKEN, use_context=True)
     dp = updater.dispatcher
 
-    # Buyruqlarni qo'shamiz
     dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(CallbackQueryHandler(check_subscription_callback, pattern='check_subscription'))
+    dp.add_handler(CallbackQueryHandler(search_by_code_callback, pattern='search_by_code'))
+    dp.add_handler(CallbackQueryHandler(advertisement_callback, pattern='advertisement'))
 
-    # Botni ishga tushiramiz
     updater.start_polling(timeout=30)
     print("Bot ishga tushdi va foydalanuvchilarni kutmoqda...")
     updater.idle()
